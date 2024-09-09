@@ -8,7 +8,7 @@ data "oci_core_vcn" "oke" {
 
 locals {
   # Created VCN if enabled, else var.vcn_id
-  vcn_id = var.create_vcn ? try(one(module.vcn[*].vcn_id), var.vcn_id) : var.vcn_id
+  vcn_id = var.create_vcn ? one(module.vcn[*].vcn_id) : var.vcn_id
 
   # Configured VCN CIDRs if creating, else from provided vcn_id
   vcn_lookup             = coalesce(one(data.oci_core_vcn.oke[*].cidr_blocks), [])
