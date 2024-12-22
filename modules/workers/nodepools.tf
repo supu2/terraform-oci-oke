@@ -122,6 +122,7 @@ resource "oci_containerengine_node_pool" "tfscaled_workers" {
       node_metadata["user_data"],               # templated cloud-init
       node_config_details[0].placement_configs, # dynamic placement configs
       # node_source_details[0],                   # dynamic image lookup
+      node_config_details[0].size,
     ]
 
     precondition {
