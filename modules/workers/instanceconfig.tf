@@ -61,6 +61,10 @@ resource "oci_core_instance_configuration" "workers" {
           secondary_vnics          = jsonencode(lookup(each.value, "secondary_vnics", {}))
           ssh_authorized_keys      = var.ssh_public_key
           user_data                = lookup(lookup(data.cloudinit_config.workers, each.key, {}), "rendered", "")
+          oke-native-pod-networking = var.cni_type == "npn" ? true : false
+          oke-max-pods              = var.max_pods_per_node
+          pod-subnets               = coalesce(var.pod_subnet_id, var.worker_subnet_id, "none")
+          pod-nsgids                = var.cni_type == "npn" ? join(",", each.value.pod_nsg_ids) : null
         },
 
         # Only provide cluster DNS service address if set explicitly; determined automatically in practice.
@@ -76,7 +80,8 @@ resource "oci_core_instance_configuration" "workers" {
       dynamic "shape_config" {
         for_each = length(regexall("Flex", each.value.shape)) > 0 ? [1] : []
         content {
-          ocpus = each.value.ocpus
+          baseline_ocpu_utilization = lookup(each.value, "burst", "BASELINE_1_1")
+          ocpus                     = each.value.ocpus
           memory_in_gbs = ( # If > 64GB memory/core, correct input to exactly 64GB memory/core
             (each.value.memory / each.value.ocpus) > 64 ? each.value.ocpus * 64 : each.value.memory
           )
@@ -116,18 +121,22 @@ resource "oci_core_instance_configuration" "workers" {
       is_pv_encryption_in_transit_enabled = each.value.pv_transit_encryption
     }
 
-    block_volumes {
-      attach_details {
-        type                                = each.value.block_volume_type
-        is_pv_encryption_in_transit_enabled = each.value.pv_transit_encryption
-      }
+    dynamic "block_volumes" {
+      for_each = (lookup(each.value, "disable_block_volume", false) != true) ? [1] : []
+      content {
+        attach_details {
+          type                                = each.value.block_volume_type
+          is_pv_encryption_in_transit_enabled = each.value.pv_transit_encryption
+        }
 
-      create_details {
-        // Limit to first candidate placement AD for cluster-network; undefined for all otherwise
-        availability_domain = each.value.mode == "cluster-network" ? element(each.value.availability_domains, 1) : null
-        compartment_id      = each.value.compartment_id
-        display_name        = each.key
-        kms_key_id          = each.value.volume_kms_key_id
+        create_details {
+          // Limit to first candidate placement AD for cluster-network; undefined for all otherwise
+          availability_domain = each.value.mode == "cluster-network" ? element(each.value.availability_domains, 1) : null
+          compartment_id      = each.value.compartment_id
+          display_name        = each.key
+          kms_key_id          = each.value.volume_kms_key_id
+          size_in_gbs         = max(50, lookup(each.value, "block_volume_size_in_gbs", 50))
+        }
       }
     }
 
@@ -161,7 +170,6 @@ resource "oci_core_instance_configuration" "workers" {
     create_before_destroy = true
     ignore_changes = [
       defined_tags, freeform_tags, display_name,
-      instance_details[0].launch_details[0].metadata,
       instance_details[0].launch_details[0].defined_tags,
       instance_details[0].launch_details[0].freeform_tags,
       instance_details[0].launch_details[0].create_vnic_details[0].defined_tags,
